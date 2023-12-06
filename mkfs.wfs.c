@@ -12,9 +12,10 @@ static int init_fs(const char *path) {
     struct wfs_sb supblock;
     struct wfs_inode root;
 
-    supblock.magic = WFS_MAGIC_NUMBA;
+    supblock.magic = WFS_MAGIC;
     supblock.head = sizeof(struct wfs_sb) + sizeof(struct wfs_inode);
     
+    // creating the root
     root.inode_number = 0;
     root.deleted = 0;
     root.mode = S_IFDIR;
