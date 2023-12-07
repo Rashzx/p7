@@ -15,24 +15,38 @@ const char *disk_path;
 void *mapped_disk; // starting of the superblock
 int currFd; // file descriptor for the current open file
 
+int count_slashes(const char *filepath) {
+    int count = 0;
+
+    while (*filepath) {
+        if (*filepath == '/') {
+            count++;
+        }
+        filepath++;
+    }
+
+    return count;
+}
+
 // two helper methods
 // 1. get inode number from path
 /*
-
+    - tokenize by using slashes
+        - use the count slashes method as a sanity check for later
+    - traverse the directory starting from the root node and then by each component in 
 */
+
+
+
 // 2. get inode from inode number (get log entry from inode number)
-/*
-while loop through every single log entry, bound to get the inode number
-check the inode portion of the log entry, because there is no imap
-check the inode number in the inode portion (simple check to match) .inode.inodenumber, return the inode
-do not break when you get matching inode, you need the last entry in the log with matching inode
-    return that one :D
-if not, continue
-
-*/
-    // Your implementation here
     // how to get the superblock
     /*
+        while loop through every single log entry, bound to get the inode number
+        check the inode portion of the log entry, because there is no imap
+        check the inode number in the inode portion (simple check to match) .inode.inodenumber, return the inode
+        do not break when you get matching inode, you need the last entry in the log with matching inode
+            return that one :D
+        if not, continue
         make variable superblock of type wfs_sb (magic num)
         declare a variable superblock
         
@@ -47,19 +61,25 @@ if not, continue
         return a wfs_log_entry,     unsigned int inode_number;
 
     */
-   
+struct wfs_log_entry find_last_matching_inode(unsigned int inode_number){
+    struct wfs_log_entry* last_matching_entry = NULL; // temp var for log entry, set it to null
 
-int count_slashes(const char *filepath) {
-    int count = 0;
+    struct wfs_sb* superblock_start = (struct wfs_sb*)mapped_disk; // temp struct for start, set it to mapped disk
+    struct wfs_log_entry* curr_log_entry = (struct wfs_log_entry*)(mapped_disk + sizeof(struct wfs_sb)); // temp struct for current, set it to start of disk + size of a SB struct
 
-    while (*filepath) {
-        if (*filepath == '/') {
-            count++;
+    // iterate through the superblock whilst maintaining current entry
+    while (curr_log_entry <= superblock_start->head){
+        if (curr_log_entry->inode.inode_number == inode_number && curr_log_entry->inode.deleted == 0){
+            last_matching_entry = curr_log_entry;
         }
-        filepath++;
+        // curr_log_entry += sizeof(struct wfs_inode);
+        curr_log_entry = (struct wfs_log_entry*)((char*)curr_log_entry + sizeof(struct wfs_inode) + curr_log_entry->inode.size); // pointer jump to the next 
     }
 
-    return count;
+    if (last_matching_entry == NULL){
+        printf("inode not found, still equal to NULL");
+    }
+    return *last_matching_entry;
 }
 
 static int wfs_getattr(const char *path, struct stat *stbuf) {
