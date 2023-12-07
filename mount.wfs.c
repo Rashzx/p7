@@ -33,8 +33,47 @@ int count_slashes(const char *filepath) {
 /*
     - tokenize by using slashes
         - use the count slashes method as a sanity check for later
-    - traverse the directory starting from the root node and then by each component in 
+    - traverse the directory starting from the root node and then by each component in the tokenized path
+        - check if wfs_inode has file or directory
+        - if file, can directly check and use data (you can stop, if mismatch and then there is error)
+        - if directlry, have to parse through the directory to check, if next one exists good, if not error
+    - return the inode number
 */
+
+unsigned long get_inode_number_path(const char *filepath){
+    int separations = 0;
+    unsigned long found_inode_number = -1; // impossible for inode to be -1
+    char *temp_path = strdup(filepath);
+    if (temp_path == NULL) {
+        perror("error copying path with strdup, in get inode number");
+        exit(-1);
+    }
+    unsigned long current_number = 0;
+    char *token = strtok(temp_path, "/");
+
+    while (token != NULL){
+
+
+
+
+
+
+        token = strtok(NULL, "/"); // resumes tokenizing the string from where it left off in the previous, continues searching for the next token after the last delimiter found
+        separations = separations + 1;
+    }
+
+    if (separations != count_slashes(filepath)){
+        printf("the sanity check is off");
+        exit(-1);
+    }
+    if (found_inode_number == -1){
+        printf("the matching inode was not found in get inode number path");
+        free(temp_path);
+        exit(-1);
+    }
+    free(temp_path);
+    return found_inode_number;
+}
 
 
 
@@ -61,7 +100,7 @@ int count_slashes(const char *filepath) {
         return a wfs_log_entry,     unsigned int inode_number;
 
     */
-struct wfs_log_entry find_last_matching_inode(unsigned int inode_number){
+struct wfs_log_entry find_last_matching_inode(unsigned long inode_number){
     struct wfs_log_entry* last_matching_entry = NULL; // temp var for log entry, set it to null
 
     struct wfs_sb* superblock_start = (struct wfs_sb*)mapped_disk; // temp struct for start, set it to mapped disk
@@ -83,6 +122,26 @@ struct wfs_log_entry find_last_matching_inode(unsigned int inode_number){
 }
 
 static int wfs_getattr(const char *path, struct stat *stbuf) {
+    unsigned long temp_inode_number = get_inode_number_path(path);
+    if (temp_inode_number == -1){
+        printf("function returned -1, meaning file doesn't exist\n");
+        return(-1);
+    }
+    struct wfs_log_entry temp_log_entry = find_last_matching_inode(temp_inode_number);
+    if (temp_log_entry.data == NULL){
+        printf("function returned NULL, meaning file doesn't exist\n");
+        return(-1);
+    }
+
+    stbuf->st_uid = temp_log_entry.inode.uid;
+    stbuf->st_gid = temp_log_entry.inode.gid;
+    stbuf->st_ino = temp_log_entry.inode.inode_number;
+    stbuf->st_mode = temp_log_entry.inode.mode;
+    stbuf->st_size = temp_log_entry.inode.size;
+    stbuf->st_nlink = temp_log_entry.inode.links;
+    stbuf->st_atime = temp_log_entry.inode.atime;
+    stbuf->st_mtime = temp_log_entry.inode.mtime;
+    stbuf->st_ctime = temp_log_entry.inode.ctime;
 
     return 0;
 }
