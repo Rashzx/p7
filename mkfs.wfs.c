@@ -1,6 +1,12 @@
+#define _POSIX_C_SOURCE 200809L
 #include "wfs.h"
-#include "sys/stat.h" // for mode constants
-#include "time.h"    // for time
+#include <fcntl.h>   // for open
+#include <unistd.h>  // for close, read, write
+#include <stdio.h>   // for printf
+#include <stdlib.h>  // for exit
+#include <sys/stat.h> // for S_IFDIR
+#include <time.h>    // for time
+
 
 static int init_fs(const char *path) {
     int fd = open(path, O_RDWR | O_CREAT | O_TRUNC, 0644);
