@@ -41,23 +41,42 @@ int count_slashes(const char *filepath) {
 */
 
 unsigned long get_inode_number_path(const char *filepath){
+    unsigned long inode = 0;
     int separations = 0;
-    unsigned long found_inode_number = -1; // impossible for inode to be -1
     char *temp_path = strdup(filepath);
     if (temp_path == NULL) {
         perror("error copying path with strdup, in get inode number");
         exit(-1);
     }
-    unsigned long current_number = 0;
     char *token = strtok(temp_path, "/");
-
+    int found_inode = 1;
     while (token != NULL){
+        found_inode = 0;
+        char *start_sup = (char*)mapped_disk + sizeof(struct wfs_sb);
+        struct wfs_log_entry *templog;
+        while(start_sup < (char*)mapped_disk + ((struct wfs_sb *)mapped_disk)->head){
+            struct wfs_log_entry *curr = (struct wfs_log_entry *)start_sup; 
 
+            if(curr->inode.deleted == 0 && S_ISDIR(curr->inode.mode) && curr->inode.inode_number == inode){
+                templog = curr;
+            }
 
+            start_sup += sizeof(struct wfs_inode) + curr->inode.size ;
+        }
 
+        struct wfs_dentry *data = (struct wfs_dentry *)templog->data;
+        int offset = 0;
 
+        while(offset < templog->inode.size){
+            if(strcmp(token, data->name) == 0){
+                found_inode = 1;
+                inode = data->inode_number;
+                break;
+            }
 
-
+            offset += sizeof(struct wfs_dentry);
+            data++; 
+        }
         token = strtok(NULL, "/"); // resumes tokenizing the string from where it left off in the previous, continues searching for the next token after the last delimiter found
         separations = separations + 1;
     }
@@ -66,13 +85,13 @@ unsigned long get_inode_number_path(const char *filepath){
         printf("the sanity check is off");
         exit(-1);
     }
-    if (found_inode_number == -1){
+    if (found_inode == 0){
         printf("the matching inode was not found in get inode number path");
         free(temp_path);
         exit(-1);
     }
     free(temp_path);
-    return found_inode_number;
+    return inode;
 }
 
 
