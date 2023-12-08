@@ -1,6 +1,4 @@
 #define FUSE_USE_VERSION 30
-#define _POSIX_C_SOURCE 200809L
-#include "wfs.h"
 #include <fuse.h>
 #include <errno.h>
 #include <sys/mman.h>
@@ -9,7 +7,9 @@
 #include <stdlib.h>
 #include <fcntl.h>
 #include <unistd.h>
-
+#include <sys/stat.h>
+#include <time.h>
+#include "wfs.h"
 
 const char *disk_path;
 void *mapped_disk; // starting of the superblock
@@ -17,14 +17,12 @@ int currFd; // file descriptor for the current open file
 
 int count_slashes(const char *filepath) {
     int count = 0;
-
     while (*filepath) {
         if (*filepath == '/') {
             count++;
         }
         filepath++;
     }
-
     return count;
 }
 
@@ -57,7 +55,6 @@ unsigned long get_inode_number_path(const char *filepath){
 
 
 
-
         token = strtok(NULL, "/"); // resumes tokenizing the string from where it left off in the previous, continues searching for the next token after the last delimiter found
         separations = separations + 1;
     }
@@ -74,7 +71,6 @@ unsigned long get_inode_number_path(const char *filepath){
     free(temp_path);
     return found_inode_number;
 }
-
 
 
 // 2. get inode from inode number (get log entry from inode number)
@@ -114,12 +110,45 @@ struct wfs_log_entry find_last_matching_inode(unsigned long inode_number){
         // curr_log_entry += sizeof(struct wfs_inode);
         curr_log_entry = (struct wfs_log_entry*)((char*)curr_log_entry + sizeof(struct wfs_inode) + curr_log_entry->inode.size); // pointer jump to the next 
     }
+    free(curr_log_entry);
 
-    if (last_matching_entry == NULL){
-        printf("inode not found, still equal to NULL");
+    if (last_matching_entry == NULL){        printf("inode not found, still equal to NULL");
     }
     return *last_matching_entry;
 }
+
+/*
+helper method to find the highest inode number (used to find the next inode number to insert in at)
+start at a 0 for root node, set it equal to a var
+while loop that stops when find_last_matching_inode's log entry inode's inode number is not equal to the var
+if the log entry inode is equal to the var, break out of the while loop
+increment the var
+return the var
+*/
+unsigned int find_current_highest_inode_number(){
+    unsigned int current_inode_number = 0;
+    struct wfs_log_entry temp_log_entry;
+    while(1){
+        temp_log_entry = find_last_matching_inode((unsigned long)current_inode_number);
+        if (temp_log_entry.inode.inode_number == NULL || temp_log_entry.inode.inode_number != current_inode_number){
+            break;
+        }
+        current_inode_number++;
+    }
+
+    // Now you can use temp_log_entry outside of the loop
+    return temp_log_entry.inode.inode_number;
+}
+
+/*
+look at the logentry as you're looking at code and debugging
+    - always organized as inode and data
+    - print the inode
+    - printInode(wfs.inode i), prints out everything about the inode
+    - printDirEntry()
+    - printLogEntry(wfs_log_entry)
+        - if inode is directory, have to parse the directory entry
+*/
 
 static int wfs_getattr(const char *path, struct stat *stbuf) {
     unsigned long temp_inode_number = get_inode_number_path(path);
@@ -135,20 +164,30 @@ static int wfs_getattr(const char *path, struct stat *stbuf) {
 
     stbuf->st_uid = temp_log_entry.inode.uid;
     stbuf->st_gid = temp_log_entry.inode.gid;
-    stbuf->st_ino = temp_log_entry.inode.inode_number;
-    stbuf->st_mode = temp_log_entry.inode.mode;
-    stbuf->st_size = temp_log_entry.inode.size;
-    stbuf->st_nlink = temp_log_entry.inode.links;
-    stbuf->st_atime = temp_log_entry.inode.atime;
     stbuf->st_mtime = temp_log_entry.inode.mtime;
-    stbuf->st_ctime = temp_log_entry.inode.ctime;
+    stbuf->st_mode = temp_log_entry.inode.mode;
+    stbuf->st_nlink = temp_log_entry.inode.links;
+    stbuf->st_size = temp_log_entry.inode.size;
+    stbuf->st_ino = temp_log_entry.inode.inode_number;
 
+    /*
+    If a field is meaningless or semi-meaningless (e.g., st_ino) then it should be set to 0 or given a "reasonable" value.
+    //    stbuf->st_dev = 0;
+    //    stbuf->st_blksize = 0;
+    //    stbuf->st_blocks = 0;
+    //    stbuf->st_rdev = 0;
+    */
     return 0;
 }
 
 static int wfs_mknod(const char *path, mode_t mode, dev_t dev) {
     // Your implementation here
     return 0;
+    /*
+    create a new log entry for the parent directory that holds the file that you are making
+    make a log entry for the file
+    check the stat of the file
+    */
 }
 
 static int wfs_mkdir(const char *path, mode_t mode) {
@@ -158,6 +197,7 @@ static int wfs_mkdir(const char *path, mode_t mode) {
 
 static int wfs_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi) {
     // Your implementation here
+    // you need the proper offset
     return 0;
 }
 
@@ -166,12 +206,12 @@ static int wfs_write(const char *path, const char *buf, size_t size, off_t offse
     return 0;
 }
 
-static int wfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi) {
+static int wfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi) { // walk through the directory entries
     printf("at the readdirectory wfs\n");
     return 0;
 }
 
-static int wfs_unlink(const char *path) {
+static int wfs_unlink(const char *path) { // same as deleting, set the inode delete,
     // Your implementation here
     return 0;
 }
@@ -239,6 +279,5 @@ int main(int argc, char *argv[]) {
 
     // Unmap the memory
     munmap(mapped_disk, mapping_length);
-
     return fuse_ret;
 }
