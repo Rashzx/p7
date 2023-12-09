@@ -12,7 +12,7 @@
 #include "wfs.h"
 
 const char *disk_path;
-void *mapped_disk; // starting of the superblock
+char *mapped_disk; // starting of the superblock
 int currFd; // file descriptor for the current open file
 
 int count_slashes(const char *filepath) {
@@ -43,21 +43,25 @@ unsigned long get_inode_number_path(const char *filepath){
     int separations = 0;
     char *temp_path = strdup(filepath);
     if (temp_path == NULL) {
-        perror("error copying path with strdup, in get inode number");
+        perror("error copying path with strdup, in get inode number\n");
         exit(-1);
     }
     char *token = strtok(temp_path, "/");
     int found_inode = 1;
+    // manage the root directory at the start
     while (token != NULL){
         found_inode = 0;
         char *start_sup = (char*)mapped_disk + sizeof(struct wfs_sb);
         struct wfs_log_entry *templog;
+
+        // Finds Most recent log with corresponding inode number
         while(start_sup < (char*)mapped_disk + ((struct wfs_sb *)mapped_disk)->head){
             struct wfs_log_entry *curr = (struct wfs_log_entry *)start_sup; 
 
-            if(curr->inode.deleted == 0 && S_ISDIR(curr->inode.mode) && curr->inode.inode_number == inode){
+            if(curr->inode.deleted == 0/*<== remove check*/ && S_ISDIR(curr->inode.mode) && curr->inode.inode_number == inode){ // Remove checks for deleted
                 templog = curr;
             }
+            // if a file is found halway through it, break or handle it
 
             start_sup += sizeof(struct wfs_inode) + curr->inode.size ;
         }
@@ -80,11 +84,11 @@ unsigned long get_inode_number_path(const char *filepath){
     }
 
     if (separations != count_slashes(filepath)){
-        printf("the sanity check is off");
+        printf("the sanity check is off\n");
         exit(-1);
     }
     if (found_inode == 0){
-        printf("the matching inode was not found in get inode number path");
+        printf("the matching inode was not found in get inode number path\n");
         free(temp_path);
         exit(-1);
     }
@@ -118,21 +122,24 @@ unsigned long get_inode_number_path(const char *filepath){
     */
 struct wfs_log_entry find_last_matching_inode(unsigned long inode_number){
     struct wfs_log_entry* last_matching_entry = NULL; // temp var for log entry, set it to null
+    // struct wfs_sb* superblock_start = (struct wfs_sb*)mapped_disk; // temp struct for start, set it to mapped disk
 
-    struct wfs_sb* superblock_start = (struct wfs_sb*)mapped_disk; // temp struct for start, set it to mapped disk
-    struct wfs_log_entry* curr_log_entry = (struct wfs_log_entry*)(mapped_disk + sizeof(struct wfs_sb)); // temp struct for current, set it to start of disk + size of a SB struct
+    char *current = mapped_disk + sizeof(struct wfs_sb);
 
     // iterate through the superblock whilst maintaining current entry
-    while (curr_log_entry <= superblock_start->head){
-        if (curr_log_entry->inode.inode_number == inode_number && curr_log_entry->inode.deleted == 0){
+    while (current < mapped_disk + ((struct wfs_sb *)mapped_disk)->head){
+        struct wfs_log_entry* curr_log_entry = (struct wfs_log_entry*)(current); // temp struct for current, set it to start of disk + size of a SB struct
+        // we want the time of the new to be more than the time of the old
+        if (curr_log_entry->inode.inode_number == inode_number && curr_log_entry->inode.deleted == 0 && (last_matching_entry->inode.mtime < curr_log_entry->inode.mtime)){
             last_matching_entry = curr_log_entry;
         }
         // curr_log_entry += sizeof(struct wfs_inode);
-        curr_log_entry = (struct wfs_log_entry*)((char*)curr_log_entry + sizeof(struct wfs_inode) + curr_log_entry->inode.size); // pointer jump to the next 
+        // curr_log_entry = (struct wfs_log_entry*)((char*)curr_log_entry + sizeof(struct wfs_inode) + curr_log_entry->inode.size); // pointer jump to the next 
+        current += curr_log_entry->inode.size + sizeof(struct wfs_inode);
     }
-    free(curr_log_entry);
 
-    if (last_matching_entry == NULL){        printf("inode not found, still equal to NULL");
+    if (last_matching_entry == NULL){
+        printf("inode not found, still equal to NULL");
     }
     return *last_matching_entry;
 }
@@ -150,7 +157,8 @@ unsigned int find_current_highest_inode_number(){
     struct wfs_log_entry temp_log_entry;
     while(1){
         temp_log_entry = find_last_matching_inode((unsigned long)current_inode_number);
-        if (temp_log_entry.inode.inode_number == NULL || temp_log_entry.inode.inode_number != current_inode_number){
+        // if (temp_log_entry.inode.inode_number == NULL || temp_log_entry.inode.inode_number != current_inode_number){
+        if (temp_log_entry.inode.inode_number != current_inode_number){
             break;
         }
         current_inode_number++;
@@ -179,7 +187,8 @@ static int wfs_getattr(const char *path, struct stat *stbuf) {
     struct wfs_log_entry temp_log_entry = find_last_matching_inode(temp_inode_number);
     if (temp_log_entry.data == NULL){
         printf("function returned NULL, meaning file doesn't exist\n");
-        return(-1);
+        // return(-1);
+        return -ENOENT;
     }
 
     stbuf->st_uid = temp_log_entry.inode.uid;
@@ -275,7 +284,7 @@ int main(int argc, char *argv[]) {
     int mapping_length = stat_info.st_size;
     mapped_disk = mmap(NULL, mapping_length, PROT_READ, MAP_PRIVATE, file_descriptor, 0);
     if (mapped_disk == (void *)-1) {
-        printf("Error mapping file into memory");
+        printf("Error mapping file into memory\n");
         close(file_descriptor);
         exit(-1);
     }

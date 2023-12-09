@@ -24,7 +24,7 @@ static int init_fs(const char *path) {
     // creating the root
     root.inode_number = 0;
     root.deleted = 0;
-    root.mode = S_IFDIR;
+    root.mode = S_IFDIR; // | 0755 for perission bits, this is different for file types (ibelieve that files are 0644)
     root.uid = getuid();
     root.gid = getgid();
     root.flags = 0;
