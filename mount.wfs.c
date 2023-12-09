@@ -202,6 +202,28 @@ static int wfs_getattr(const char *path, struct stat *stbuf) {
 
 static int wfs_mknod(const char *path, mode_t mode, dev_t dev) {
     // Your implementation here
+    if (get_inode_number_path(path) >= 0){
+        return -1;
+    }
+
+    
+    struct wfs_inode inode;
+    inode.mode = mode;
+    inode.deleted = 0;
+    inode.uid = getuid();
+    inode.gid = getgid();
+    inode.size = 0;
+    inode.ctime = time(NULL);
+    inode.atime = time(NULL);
+    inode.mtime = time(NULL);
+    inode.inode_number = find_current_highest_inode_number() + 1;
+    inode.links = 1;
+    inode.flags = 0;
+    struct wfs_log_entry *log;
+    log->inode = inode;
+    memcpy(mapped_disk + ((struct wfs_sb *)mapped_disk)->head, new_log, sizeof(new_log));
+    ((struct wfs_sb *)mapped_disk)->head += sizeof(new_log);
+    
     return 0;
     /*
     create a new log entry for the parent directory that holds the file that you are making
