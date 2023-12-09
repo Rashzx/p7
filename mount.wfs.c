@@ -221,8 +221,8 @@ static int wfs_mknod(const char *path, mode_t mode, dev_t dev) {
     inode.flags = 0;
     struct wfs_log_entry *log;
     log->inode = inode;
-    memcpy(mapped_disk + ((struct wfs_sb *)mapped_disk)->head, new_log, sizeof(new_log));
-    ((struct wfs_sb *)mapped_disk)->head += sizeof(new_log);
+    memcpy(((char *)mapped_disk) + ((struct wfs_sb *)mapped_disk)->head, log, sizeof(*log));
+    ((struct wfs_sb *)mapped_disk)->head += sizeof(log);
     
     return 0;
     /*
