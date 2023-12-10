@@ -223,16 +223,15 @@ look at the logentry as you're looking at code and debugging
 
 static int wfs_getattr(const char *path, struct stat *stbuf) {
     struct wfs_log_entry *logx = (struct wfs_log_entry*)get_inode_number_path(path);
-    struct wfs_dentry*e=((void*)logx->data);
-    if (e->inode_number == -1){
-        printf("function returned -1, meaning file doesn't exist\n");
-        return(-1);
-    }
-    if (logx->data == NULL){
-        printf("function returned NULL, meaning file doesn't exist\n");
-        // return(-1);
-        return -ENOENT;
-    }
+//    if (e->inode_number == -1){
+  //      printf("function returned -1, meaning file doesn't exist\n");
+    //    return(-1);
+ //   }
+ //   if (logx->data == NULL){
+   //     printf("function returned NULL, meaning file doesn't exist\n");
+  //      // return(-1);
+ //       return -ENOENT;
+ //   }
 
     struct wfs_inode *i = &logx->inode;
       if (!i)
