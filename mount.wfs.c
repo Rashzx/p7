@@ -403,8 +403,25 @@ static int wfs_read(const char *path, char *buf, size_t size, off_t offset, stru
 }
 
 static int wfs_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi) {
-    // Your implementation here
-    return 0;
+    struct wfs_inode *i = get_inode_number_path(path);
+    struct wfs_log_entry *e=(void *)i;
+
+    size_t new_size;
+    if(i->size>size){
+        new_size=i->size;
+    }else{
+        new_size=size;
+    }
+
+    memcpy(e->data+offset, buf, new_size);
+
+    // update inode
+    i->size = new_size;
+    i->atime = time(NULL);
+    i->mtime = time(NULL);
+    i->ctime = time(NULL);
+
+    return new_size;
 }
 
 static int wfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi) { // walk through the directory entries
@@ -426,11 +443,7 @@ static int wfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_
 }
 
 static int wfs_unlink(const char *path) { // same as deleting, set the inode delete,
-    int end;
-    end = unlink(path);
-    if(end == -1){
-      return -errno;
-    }
+
     return 0;
 }
 
