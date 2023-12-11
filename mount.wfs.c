@@ -40,23 +40,13 @@ int count_slashes(const char *filepath) {
     return count;
 }
 
-/**
- * Helper method that tokenizes a string based on the '/' delimiter.
- *
- * @param str       The input string to be tokenized.
- * @return          An array of strings containing the tokens.
- *                  The array is null-terminated.
- *                  Memory is dynamically allocated, and the caller is responsible for freeing it.
- */
 char** tokenize(char str[]) {
-    // Initialize an array to store pointers to tokens
     char **array = malloc(MAX_LENGTH * sizeof(char*));
     if (array == NULL) { // Handle memory allocation failure
         printf("Memory allocation failed");
         exit(EXIT_FAILURE);
     }
 
-    // Tokenize the input string with forward slashes
     char *token = strtok(str, "/");
     int i = 0;
     while (token != NULL && i < MAX_LENGTH) {
@@ -72,13 +62,6 @@ char** tokenize(char str[]) {
     return array;
 }
 
-/**
- * Helper method that removes the last token from the input string and returns the modified string.
- *
- * @param str   The input string to be processed.
- * @return      A newly allocated string without the last token.
- *              The caller is responsible for freeing the returned string.
- */
 char* remove_last_token(char str[]) {
     char** tokens = tokenize(str);
     if (tokens[0] == NULL) { // return empty string on an empty path
@@ -174,12 +157,10 @@ struct wfs_inode *get_inode_number_path(const char *filepath){
     }
 
     while(tokens[i] != NULL) {
-        // printf("Trying to find: %s\n", tokens[i]);
         found_flag=0;
         struct wfs_dentry* entry = (struct wfs_dentry*)curr->data;
 
         for(int j = 0; j < (curr->inode.size/sizeof(struct wfs_dentry)); j++) {
-            printf("DIR entry: %s\n", entry->name);
             if(strcmp(tokens[i],entry->name) == 0) {
                 curr = find_last_matching_inode(entry->inode_number);
                 if (curr == NULL) {
@@ -343,6 +324,7 @@ static int wfs_mknod(const char *path, mode_t mode, dev_t dev) {
     memcpy((char*)mapped_disk+head,new_entry,size);
 
     head+=size;
+    
     free(new_entry);
 
     struct wfs_inode iii={
@@ -359,8 +341,9 @@ static int wfs_mknod(const char *path, mode_t mode, dev_t dev) {
     };
 
     memcpy((char*)mapped_disk+head, &iii,sizeof(iii));
-
+    struct wfs_sb *sb=(void*)mapped_disk;
     head+=sizeof(iii);
+    sb->head = head;
 
     return 0;
     /*
@@ -476,29 +459,32 @@ static int wfs_read(const char *path, char *buf, size_t size, off_t offset, stru
  *         Possible error codes include -ENOENT (file does not exist).
  */
 static int wfs_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi) {
-    struct wfs_inode *file_inode = get_inode_number_path(path);
-    if (file_inode == NULL) {
-        // Handle the case where the specified path does not exist
-        return -ENOENT;
+    char *fullpath;
+    
+    fullpath = strdup(path);
+
+    struct wfs_log_entry *log_entr = (struct wfs_log_entry*)get_inode_number_path(fullpath);
+
+    size_t updated_size;
+
+    if(log_entr->inode.size > size){
+        
+        updated_size = log_entr->inode.size;
     }
-    struct wfs_log_entry *file_log_entry = (struct wfs_log_entry *)file_inode;
+    else{
 
-    size_t write_size;
-    if(file_inode->size>size){
-        write_size = file_inode->size;
-    }else{
-        write_size = size;
+        updated_size = size;
+    
     }
-    memcpy(file_log_entry->data+offset, buf, write_size);
 
-    // update inode
-    file_inode->size = write_size;
-    file_inode->atime = time(NULL);
-    file_inode->mtime = time(NULL);
-    file_inode->ctime = time(NULL);
+    memcpy(log_entr->data + offset, buf, updated_size);
 
-    return write_size;
-}
+    log_entr->inode.size = updated_size;
+    log_entr->inode.mtime = time(NULL);
+    log_entr->inode.atime = time(NULL);
+
+    free(fullpath);
+    return updated_size;}
 
 /**
  * @brief Reads the contents of a directory and fills the buffer with directory entries.
@@ -531,7 +517,87 @@ static int wfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_
     return 0;
 }
 
+
 static int wfs_unlink(const char *path) { // same as deleting, set the inode delete,
+
+    char *fullpath;
+
+    fullpath = strdup(path);
+
+    char *beforeLastSlash;
+    beforeLastSlash = malloc(sizeof(char) * 256);
+    const char *lastSlash = strrchr(fullpath, '/');
+    
+    if (lastSlash != NULL) {
+
+        if(lastSlash == fullpath) {
+            strcpy(beforeLastSlash, "/");
+        }
+        else {
+            ptrdiff_t length = lastSlash - fullpath;
+            strncpy(beforeLastSlash, fullpath, length);
+            beforeLastSlash[length] = '\0';
+        }
+
+    }
+
+    struct wfs_log_entry *subDirOfDelete  = (struct wfs_log_entry*)get_inode_number_path(beforeLastSlash);
+    struct wfs_log_entry *toDelete = (struct wfs_log_entry*)get_inode_number_path(fullpath);
+    if(subDirOfDelete == (struct wfs_log_entry *) NULL || toDelete == (struct wfs_log_entry *) NULL) {
+
+        return -ENOENT;
+
+    }
+
+    unsigned long inode_num = toDelete->inode.inode_number;
+    struct wfs_log_entry *curr = (struct wfs_log_entry*)( (char*) mapped_disk + sizeof(struct wfs_sb));
+
+    while(curr < (struct wfs_log_entry *) ((char*)mapped_disk + ((struct wfs_sb *)mapped_disk)->head)) {
+
+        if(curr->inode.deleted == 0 && curr->inode.inode_number == inode_num) {
+
+            curr->inode.deleted = 1;
+        
+        }
+
+        curr = (struct wfs_log_entry*) ((char *)curr + sizeof(struct wfs_inode) + curr->inode.size);
+    }
+
+
+    struct wfs_log_entry* subDir = subDirOfDelete;
+    unsigned long inodeToDel = toDelete->inode.inode_number;
+    struct wfs_log_entry *newLogEntry = (struct wfs_log_entry *) ((char *) mapped_disk + ((struct wfs_sb *)mapped_disk)->head);
+
+    memcpy(newLogEntry, &subDir->inode, sizeof(struct wfs_inode));
+
+    int inDirectory = subDir->inode.size / sizeof(struct wfs_dentry);
+
+    struct wfs_dentry *currDEntry = (struct wfs_dentry *) (subDir->data);
+    struct wfs_dentry *currData = (struct wfs_dentry *) ((char *)newLogEntry + sizeof(struct wfs_inode));
+
+
+
+    for(int i = 0; i < inDirectory; i++) {
+
+        if(currDEntry->inode_number != inodeToDel) {
+
+            currData->inode_number = currDEntry->inode_number;
+            strcpy(currData->name, currDEntry->name);
+            currData++;
+
+        }
+
+        currDEntry++;
+
+    }
+
+    newLogEntry->inode.size -= sizeof(struct wfs_dentry);
+
+
+
+    return 0;
+
+
     // struct wfs_log_entry *old_parent;
     // struct wfs_log_entry *new_parent;
     // struct wfs_log_entry *current_entry;
@@ -544,8 +610,6 @@ static int wfs_unlink(const char *path) { // same as deleting, set the inode del
 
     // current_entry->inode.deleted = 1; // set to deleted
 
-
-    return 1;
 }
 
 static struct fuse_operations ops = {
