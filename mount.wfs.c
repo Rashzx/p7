@@ -119,18 +119,6 @@ char* remove_last_token(char str[]) {
     return result;
 }
 
-// two helper methods
-// 1. get inode number from path
-/*
-    - tokenize by using slashes
-        - use the count slashes method as a sanity check for later
-    - traverse the directory starting from the root node and then by each component in the tokenized path
-        - check if wfs_inode has file or directory
-        - if file, can directly check and use data (you can stop, if mismatch and then there is error)
-        - if directlry, have to parse through the directory to check, if next one exists good, if not error
-    - return the inode number
-*/
-
 /**
  * Helper method that frees the memory allocated for an array of strings.
  *
@@ -147,15 +135,25 @@ void free_tokens(char** tokens) {
     free(tokens);
 }
 
+/**
+ * Helper method that retrieves the inode number associated with the given file path.
+ *
+ * This function tokenizes the provided file path, traverses the directory structure
+ * starting from the root node, and iteratively checks each component in the tokenized path.
+ * If a file is encountered, the function directly uses the data; if a directory is encountered,
+ * it parses through the directory to check the existence of the next component in the path.
+ *
+ * @param filepath The file path for which to retrieve the inode number.
+ * @return A pointer to the wfs_inode structure corresponding to the provided file path,
+ *         or NULL if the file path does not exist or an error occurs.
+ */
 struct wfs_inode *get_inode_number_path(const char *filepath){
     int found_flag = 0;
-
     // Make a copy of the input filepath to avoid modifying the original string
     char input[MAX_LENGTH];
     strncpy(input, filepath, MAX_LENGTH - 1);
     input[MAX_LENGTH - 1] = '\0';  // Null-termination for strings
 
-    
     char**tokens=tokenize(input);
     if (tokens == NULL) {
         printf("Error: Tokenization failed in get_inode_number_path()\n");
@@ -203,50 +201,33 @@ struct wfs_inode *get_inode_number_path(const char *filepath){
     }
 }
 
-// 2. get inode from inode number (get log entry from inode number)
-    // how to get the superblock
-    /*
-        while loop through every single log entry, bound to get the inode number
-        check the inode portion of the log entry, because there is no imap
-        check the inode number in the inode portion (simple check to match) .inode.inodenumber, return the inode
-        do not break when you get matching inode, you need the last entry in the log with matching inode
-            return that one :D
-        if not, continue
-        make variable superblock of type wfs_sb (magic num)
-        declare a variable superblock
-        
-        struct wfs_sb superblock = (wfs_sb)mapped_disk; // now it's just a pointer
-        superblock.head tells us the head of the superblock
-        struct wfs_log_entry root = (wfs_log_entry) mapped_disk + sizeof(superblock);
-        loop through log?
-        declare a wfs_log_entry currtemppointer
-        currtemppointer += sizeof (wfs_inode) + wfs_inode.size = pointer jump to next inode
-        stop when you get to the end of what's written (the wfs_sb.head), run the while loop until you gett o the head
-        return the logentry_inode NO WRONG
-        return a wfs_log_entry,     unsigned int inode_number;
-
-    */
+/**
+ * Finds the last log entry with the specified inode number.
+ *
+ * This function iterates through all log entries, checking the inode portion of each entry
+ * to find the last log entry with a matching inode number. It returns the corresponding log entry.
+ *
+ * @param inode_number The inode number to search for.
+ * @return A pointer to the last log entry with the specified inode number,
+ *         or NULL if no matching inode is found.
+ */
 struct wfs_log_entry *find_last_matching_inode(unsigned long inode_number){
     struct wfs_log_entry* last_matching_entry = NULL; // temp var for log entry, set it to null
-    // struct wfs_sb* superblock_start = (struct wfs_sb*)mapped_disk; // temp struct for start, set it to mapped disk
-
     char *current =(char*)mapped_disk + sizeof(struct wfs_sb);
 
     // iterate through the superblock whilst maintaining current entry
     while (current < ((char*)mapped_disk + head)){
-        struct wfs_log_entry* curr_log_entry = (struct wfs_log_entry*)(current); // temp struct for current, set it to start of disk + size of a SB struct
+        struct wfs_log_entry *curr_log_entry = (struct wfs_log_entry*)(current); // temp struct for current, set it to start of disk + size of a SB struct
         // we want the time of the new to be more than the time of the old
         if (curr_log_entry->inode.inode_number == inode_number){
             last_matching_entry = (struct wfs_log_entry *)curr_log_entry;
         }
-        // curr_log_entry += sizeof(struct wfs_inode);
-        // curr_log_entry = (struct wfs_log_entry*)((char*)curr_log_entry + sizeof(struct wfs_inode) + curr_log_entry->inode.size); // pointer jump to the next 
         current += curr_log_entry->inode.size + sizeof(struct wfs_inode);
         curr_log_entry = (struct wfs_log_entry *)current;
     }
 
     if (last_matching_entry == NULL){
-        printf("inode not found, still equal to NULL");
+        printf("inode not found, still equal to NULL"); // ENOENT
     }
     return last_matching_entry;
 }
@@ -283,13 +264,28 @@ look at the logentry as you're looking at code and debugging
         - if inode is directory, have to parse the directory entry
 */
 
+/**
+ * Get file or directory attributes for the specified path.
+ *
+ * This function retrieves attribute information for the file or directory specified by the given path.
+ * It populates the provided struct stat with the relevant information.
+ *
+ * @param path The path to the file or directory.
+ * @param stbuf A pointer to the struct stat to be populated with attribute information.
+ * @return 0 on success, or a negative error code on failure (e.g., -ENOENT for "No such file or directory").
+ */
 static int wfs_getattr(const char *path, struct stat *stbuf) {
-    struct wfs_log_entry *logx = (struct wfs_log_entry*)get_inode_number_path(path);
-    struct wfs_inode *i = &logx->inode;
-      if (!i)
+    struct wfs_log_entry *entry  = (struct wfs_log_entry*)get_inode_number_path(path);
+    if (!entry || entry == NULL) {
+        // Handle the case where the specified path does not exist
         return -ENOENT;
-
-    memset(stbuf, 0, sizeof(*stbuf));
+    }
+    struct wfs_inode *i = &entry->inode;
+    if (!i || i == NULL) {
+        return -ENOENT;
+    }
+        
+    memset(stbuf, 0, sizeof(*stbuf)); // initialize the struct stat (stbuf) to all zeros before populating
     stbuf->st_uid = i->uid;
     stbuf->st_gid = i->gid;
     stbuf->st_atime = i->atime;
@@ -303,6 +299,7 @@ static int wfs_getattr(const char *path, struct stat *stbuf) {
     stbuf->st_blksize = 0;
     stbuf->st_blocks = 0;
     stbuf->st_rdev = 0;
+
     return 0;
 }
 
@@ -436,58 +433,100 @@ printf("mkdir called\n");
     return 0;
 }
 
+/**
+ * FUSE callback for reading data from a file.
+ *
+ * @param path The path to the file.
+ * @param buf The buffer to store the read data.
+ * @param size The size of the buffer.
+ * @param offset The offset within the file to start reading.
+ * @param fi Information about the opened file.
+ * @return On success, the actual size of data read. On failure, a negative error code.
+ */
 static int wfs_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi) {
-    struct wfs_inode *i=get_inode_number_path(path);
-    struct wfs_log_entry*e=(void *)i;
-
-    size_t new_size;
-    if(i->size>size){
-        new_size=i->size;
-    }else{
-        new_size=size;
+    struct wfs_inode *file_inode = get_inode_number_path(path);
+    if (file_inode == NULL) {
+        return -ENOENT; // Handle the case where the specified path does not exist
     }
+    struct wfs_log_entry *file_log_entry = (void *)file_inode;
 
-    memcpy(buf, e->data+offset, new_size);
+    size_t read_size; // don't read more data than is available in the file
+    if (file_inode->size > size) {
+        read_size = size;
+    } else {
+        read_size = file_inode->size;
+    }
+    memcpy(buf, file_log_entry->data + offset, read_size);
 
-    return new_size;
+    return read_size;
 }
 
+/**
+ * @brief Writes data to a file in the custom file system.
+ *
+ * This function is called to write data to a file specified by the path.
+ * It updates the file's content, size, and metadata (access time, modification time, and change time).
+ *
+ * @param path The path of the file to write.
+ * @param buf The buffer containing the data to be written.
+ * @param size The size of the data to write.
+ * @param offset The offset in the file where writing should start.
+ * @param fi File information (not used in this implementation).
+ * @return On success, returns the number of bytes written. On failure, returns an appropriate error code.
+ *         Possible error codes include -ENOENT (file does not exist).
+ */
 static int wfs_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi) {
-    struct wfs_inode *i = get_inode_number_path(path);
-    struct wfs_log_entry *e=(void *)i;
-
-    size_t new_size;
-    if(i->size>size){
-        new_size=i->size;
-    }else{
-        new_size=size;
+    struct wfs_inode *file_inode = get_inode_number_path(path);
+    if (file_inode == NULL) {
+        // Handle the case where the specified path does not exist
+        return -ENOENT;
     }
+    struct wfs_log_entry *file_log_entry = (struct wfs_log_entry *)file_inode;
 
-    memcpy(e->data+offset, buf, new_size);
+    size_t write_size;
+    if(file_inode->size>size){
+        write_size = file_inode->size;
+    }else{
+        write_size = size;
+    }
+    memcpy(file_log_entry->data+offset, buf, write_size);
 
     // update inode
-    i->size = new_size;
-    i->atime = time(NULL);
-    i->mtime = time(NULL);
-    i->ctime = time(NULL);
+    file_inode->size = write_size;
+    file_inode->atime = time(NULL);
+    file_inode->mtime = time(NULL);
+    file_inode->ctime = time(NULL);
 
-    return new_size;
+    return write_size;
 }
 
+/**
+ * @brief Reads the contents of a directory and fills the buffer with directory entries.
+ *
+ * This function is a callback registered with FUSE to handle directory listing operations.
+ *
+ * @param path The path of the directory to read.
+ * @param buf The buffer to be filled with directory entries.
+ * @param filler The filler function to add entries to the buffer.
+ * @param offset The offset within the directory (unused in this implementation).
+ * @param fi Information about the opened file (unused in this implementation).
+ *
+ * @return 0 on success, or a negative error code on failure.
+ *         -ENOENT is returned if the specified path does not exist.
+ */
 static int wfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi) { // walk through the directory entries
-    
-    
-
-    filler(buf, ".", NULL, 0);  // Current Directory
-    filler(buf, "..", NULL, 0); // Parent Directory
-    struct wfs_log_entry *log = (struct wfs_log_entry*)get_inode_number_path(path);
-    struct wfs_dentry* dentry = (void*) log->data;
-
-    size_t entries = log->inode.size/sizeof(struct wfs_dentry);
-    assert(log->inode.size % sizeof(struct wfs_dentry) == 0);
-
+    filler(buf, ".", NULL, 0);  // Add entry for current Directory
+    filler(buf, "..", NULL, 0); // Add entry for parent Directory
+    struct wfs_log_entry *current_log_entry = (struct wfs_log_entry*)get_inode_number_path(path);
+    if (current_log_entry == NULL) {
+        return -ENOENT; // Handle the case where the specified path does not exist
+    }
+    struct wfs_dentry *current_directory_entry = (void*) current_log_entry->data;
+    size_t entries = current_log_entry->inode.size / sizeof(struct wfs_dentry); // Calculate the number of directory entries
+    assert(current_log_entry->inode.size % sizeof(struct wfs_dentry) == 0); // Verify that the size is a multiple of the entry size
+    // Iterate through each directory entry and add its name to the buffer
     for(size_t i = 0; i < entries; i++){
-        filler(buf, (dentry + i) -> name, NULL, 0);
+        filler(buf, (current_directory_entry + i)->name, NULL, 0);
     }
     return 0;
 }
