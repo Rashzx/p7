@@ -480,58 +480,6 @@ static int wfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_
     return 0;
 }
 
-void deleteAll(unsigned long inode_num) {
-
-    struct wfs_log_entry *curr = (struct wfs_log_entry*)( (char*) mapped_disk + sizeof(struct wfs_sb));
-
-    while(curr < (struct wfs_log_entry *) ((char*)mapped_disk + ((struct wfs_sb *)mapped_disk)->head)) {
-
-        // CHECK IF DELETED OR NOT
-        if(curr->inode.deleted == 0 && curr->inode.inode_number == inode_num) {
-
-            curr->inode.deleted = 1;
-        
-        }
-
-        curr = (struct wfs_log_entry*) ((char *)curr + sizeof(struct wfs_inode) + curr->inode.size);
-    }
-
-    return;
-
-}
-
-
-void keepExcept(struct wfs_log_entry* subDir, unsigned long inodeToDel) {
-
-    struct wfs_log_entry *newLogEntry = (struct wfs_log_entry *) ((char *) mapped_disk + ((struct wfs_sb *)mapped_disk)->head);
-
-    memcpy(newLogEntry, &subDir->inode, sizeof(struct wfs_inode));
-
-    int inDirectory = subDir->inode.size / sizeof(struct wfs_dentry);
-
-    struct wfs_dentry *currDEntry = (struct wfs_dentry *) (subDir->data);
-
-    struct wfs_dentry *currData = (struct wfs_dentry *) ((char *)newLogEntry + sizeof(struct wfs_inode));
-
-    for(int i = 0; i < inDirectory; i++) {
-
-        if(currDEntry->inode_number != inodeToDel) {
-
-            currData->inode_number = currDEntry->inode_number;
-            strcpy(currData->name, currDEntry->name);
-            currData++;
-
-        }
-
-        currDEntry++;
-
-    }
-
-    newLogEntry->inode.size -= sizeof(struct wfs_dentry);
-
-    return;
-
-}
 
 static int wfs_unlink(const char *path) { // same as deleting, set the inode delete,
 
@@ -564,9 +512,52 @@ static int wfs_unlink(const char *path) { // same as deleting, set the inode del
 
     }
 
-    deleteAll(toDelete->inode.inode_number);
+    unsigned long inode_num = toDelete->inode.inode_number;
+    struct wfs_log_entry *curr = (struct wfs_log_entry*)( (char*) mapped_disk + sizeof(struct wfs_sb));
 
-    keepExcept(subDirOfDelete, toDelete->inode.inode_number);
+    while(curr < (struct wfs_log_entry *) ((char*)mapped_disk + ((struct wfs_sb *)mapped_disk)->head)) {
+
+        // CHECK IF DELETED OR NOT
+        if(curr->inode.deleted == 0 && curr->inode.inode_number == inode_num) {
+
+            curr->inode.deleted = 1;
+        
+        }
+
+        curr = (struct wfs_log_entry*) ((char *)curr + sizeof(struct wfs_inode) + curr->inode.size);
+    }
+
+
+    struct wfs_log_entry* subDir = subDirOfDelete;
+    unsigned long inodeToDel = toDelete->inode.inode_number;
+    struct wfs_log_entry *newLogEntry = (struct wfs_log_entry *) ((char *) mapped_disk + ((struct wfs_sb *)mapped_disk)->head);
+
+    memcpy(newLogEntry, &subDir->inode, sizeof(struct wfs_inode));
+
+    int inDirectory = subDir->inode.size / sizeof(struct wfs_dentry);
+
+    struct wfs_dentry *currDEntry = (struct wfs_dentry *) (subDir->data);
+    struct wfs_dentry *currData = (struct wfs_dentry *) ((char *)newLogEntry + sizeof(struct wfs_inode));
+
+
+
+    for(int i = 0; i < inDirectory; i++) {
+
+        if(currDEntry->inode_number != inodeToDel) {
+
+            currData->inode_number = currDEntry->inode_number;
+            strcpy(currData->name, currDEntry->name);
+            currData++;
+
+        }
+
+        currDEntry++;
+
+    }
+
+    newLogEntry->inode.size -= sizeof(struct wfs_dentry);
+
+
 
     return 0;
 
