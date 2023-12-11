@@ -12,6 +12,8 @@
 #include "wfs.h"
 #include "assert.h"
 
+#define MAX_LENGTH 100
+
 const char *disk_path;
 void *mapped_disk; // starting of the superblock
 int currFd; // file descriptor for the current open file
@@ -35,9 +37,9 @@ int count_slashes(const char *filepath) {
 char** tokenize(char str[]) {
     int i = 0;
     char *p = strtok(str, "/");
-    char **array = malloc(100 * sizeof(char*));  // Allocate memory for an arra>
+    char **array = malloc(MAX_LENGTH * sizeof(char*));  // Allocate memory for an array
 
-    while (p != NULL && i < 100) {
+    while (p != NULL && i < MAX_LENGTH) {
         array[i++] = strdup(p);  // Duplicate the token and store its pointer
         p = strtok(NULL, "/");
     }
@@ -105,8 +107,8 @@ struct wfs_inode *get_inode_number_path(const char *filepath){
     int flag=0;
   //  printf("get_inode path %s\n",path);
 
-    char input[100];
-    for(int i = 0; i < 100; i++) {
+    char input[MAX_LENGTH];
+    for(int i = 0; i < MAX_LENGTH; i++) {
         input[i] = filepath[i];
     }
     char**tokens=tokenize(input);
@@ -257,10 +259,10 @@ static int wfs_getattr(const char *path, struct stat *stbuf) {
 }
 
 static int wfs_mknod(const char *path, mode_t mode, dev_t dev) {
-    char x[100];
+    char x[MAX_LENGTH];
     strcpy(x,path);
 
-    char y[100];
+    char y[MAX_LENGTH];
     strcpy(y,removeLastToken(x));
     if(strlen(y)==0){
         strcpy(y,"/");
@@ -278,7 +280,7 @@ static int wfs_mknod(const char *path, mode_t mode, dev_t dev) {
     struct wfs_dentry *d=(void*)(new_entry->data+i->size);
 
     char input[25];
-    for(int i = 0; i < 100; i++) {
+    for(int i = 0; i < MAX_LENGTH; i++) {
         input[i] = path[i];
     }
     char**tokens=tokenize(input);
@@ -301,7 +303,7 @@ static int wfs_mknod(const char *path, mode_t mode, dev_t dev) {
     struct wfs_inode iii={
         .inode_number=inode_number,
         .deleted=0,
-        .mode=S_IFREG|mode,
+        .mode=__S_IFREG|mode,
         .uid=getuid(),
         .gid=getgid(),
         .size=0,
@@ -325,10 +327,10 @@ static int wfs_mknod(const char *path, mode_t mode, dev_t dev) {
 
 static int wfs_mkdir(const char *path, mode_t mode) {
 printf("mkdir called\n");
-    char x[100];
+    char x[MAX_LENGTH];
     strcpy(x,path);
 
-    char y[100];
+    char y[MAX_LENGTH];
     strcpy(y,removeLastToken(x));
     if(strlen(y)==0){
         strcpy(y,"/");
@@ -346,7 +348,7 @@ printf("mkdir called\n");
     struct wfs_dentry *d=(void*)(new_entry->data+i->size);
 
     char input[25];
-    for(int i = 0; i < 100; i++) {
+    for(int i = 0; i < MAX_LENGTH; i++) {
         input[i] = path[i];
     }
     char**tokens=tokenize(input);
@@ -369,7 +371,7 @@ printf("mkdir called\n");
     struct wfs_inode iii={
         .inode_number=inode_number,
         .deleted=0,
-        .mode=S_IFDIR|mode,
+        .mode= __S_IFDIR | mode,
         .uid=getuid(),
         .gid=getgid(),
         .size=0,
@@ -444,7 +446,7 @@ static int wfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_
 
 static int wfs_unlink(const char *path) { // same as deleting, set the inode delete,
 
-    return 0;
+    return 1;
 }
 
 static struct fuse_operations ops = {
@@ -459,26 +461,52 @@ static struct fuse_operations ops = {
 
 // take disk out , build a new argument vector without disk
 // check that argc is passed in correctly 
-// keep argument 0, mount.wfs is the first argument
 int main(int argc, char *argv[]) {
-    disk_path = argv[argc-2];
-    int file_descriptor = open(disk_path, O_RDWR); // check that the disk path is valid
+    // if (argc < 3 || strcmp(argv[0], "./mount.wfs") != 0 || argv[argc - 2][0] == '-' || argv[argc - 1][0] == '-') {
+    if (argc < 3 || argv[argc - 2][0] == '-' || argv[argc - 1][0] == '-') { // checks from fuse website
+        printf("Usage: mount.wfs [FUSE options] disk_path mount_point\n");
+        exit(-1);
+    }
+    disk_path = argv[argc-2]; // get disk path from the second last parameter of the string
+    int file_descriptor = open(disk_path, O_RDWR); // check that the disk path is valid, opening using 
+    if (file_descriptor == -1) {
+        printf("Error opening file");
+        exit(-1);
+    }
+
+    // Create a struct to hold the information from the file
     struct stat stat_info;
-    stat(disk_path,&stat_info);
-    int mapping_length = stat_info.st_size;
-    mapped_disk = mmap(0, mapping_length, PROT_READ|PROT_WRITE, MAP_SHARED, file_descriptor, 0);
+    if (fstat(file_descriptor, &stat_info) == -1) { //check error condition for error during operation
+        printf("Error getting file size");
+        close(file_descriptor);
+        exit(-1);
+    }
+    stat(disk_path,&stat_info); // gets info from the disk path and stores into stat info
+
+    // mmap the starting of the disk
+    length = stat_info.st_size;
+    mapped_disk = mmap(0, length, PROT_READ|PROT_WRITE, MAP_SHARED, file_descriptor, 0);
+    if (mapped_disk == (void *)-1) {
+        printf("Error mapping file into memory\n");
+        close(file_descriptor);
+        exit(-1);
+    }
+    close(file_descriptor);
+
+    // Set the global variable for head
+    struct wfs_sb *sb=(void*)mapped_disk;
+    head = sb->head;
+
+    // code from https://www.cs.nmsu.edu/~pfeiffer/fuse-tutorial/html/init.html
+    // building new argument vector from argc and argv
     argv[argc-2] = argv[argc-1];
     argv[argc-1] = NULL;
     argc--;
-    struct wfs_sb*sb=(void*)mapped_disk;
-    head = sb->head;
-    length=stat_info.st_size;
 
-    fuse_main(argc, argv, &ops, NULL);
-    sb->head = head;
+    int fuse_ret = fuse_main(argc, argv, &ops, NULL); // start fuse
+    // sb->head = head;
 
     // Unmap the memory
-    munmap(mapped_disk, mapping_length);
-    close(file_descriptor);
-    return 0;
+    munmap(mapped_disk, length);
+    return fuse_ret;
 }
