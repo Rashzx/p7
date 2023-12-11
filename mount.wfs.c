@@ -40,6 +40,14 @@ int count_slashes(const char *filepath) {
     return count;
 }
 
+/**
+ * Helper method that tokenizes a string based on the '/' delimiter.
+ *
+ * @param str       The input string to be tokenized.
+ * @return          An array of strings containing the tokens.
+ *                  The array is null-terminated.
+ *                  Memory is dynamically allocated, and the caller is responsible for freeing it.
+ */
 char** tokenize(char str[]) {
     char **array = malloc(MAX_LENGTH * sizeof(char*));
     if (array == NULL) { // Handle memory allocation failure
@@ -62,6 +70,13 @@ char** tokenize(char str[]) {
     return array;
 }
 
+/**
+ * Helper method that removes the last token from the input string and returns the modified string.
+ *
+ * @param str   The input string to be processed.
+ * @return      A newly allocated string without the last token.
+ *              The caller is responsible for freeing the returned string.
+ */
 char* remove_last_token(char str[]) {
     char** tokens = tokenize(str);
     if (tokens[0] == NULL) { // return empty string on an empty path
@@ -235,16 +250,6 @@ unsigned int find_current_highest_inode_number(){
     return temp_log_entry->inode.inode_number;
 }
 
-/*
-look at the logentry as you're looking at code and debugging
-    - always organized as inode and data
-    - print the inode
-    - printInode(wfs.inode i), prints out everything about the inode
-    - printDirEntry()
-    - printLogEntry(wfs_log_entry)
-        - if inode is directory, have to parse the directory entry
-*/
-
 /**
  * Get file or directory attributes for the specified path.
  *
@@ -284,73 +289,91 @@ static int wfs_getattr(const char *path, struct stat *stbuf) {
     return 0;
 }
 
+/**
+ * Creates a new file or directory node at the specified path.
+ * If the parent directory does not exist, returns -ENOENT.
+ *
+ * @param path The path for the new file or directory.
+ * @param mode The file mode and type.
+ * @param dev  Ignored; included for compatibility.
+ * @return 0 on success, or an error code on failure.
+ */
 static int wfs_mknod(const char *path, mode_t mode, dev_t dev) {
-    char x[MAX_LENGTH];
-    strcpy(x,path);
+    char input_path[MAX_LENGTH];
+    strcpy(input_path,path);
 
-    char y[MAX_LENGTH];
-    strcpy(y,remove_last_token(x));
-    if(strlen(y)==0){
-        strcpy(y,"/");
+    char parent_path[MAX_LENGTH];
+    strcpy(parent_path, remove_last_token(input_path));
+    if(strlen(parent_path) == 0){
+        strcpy(parent_path,"/");
     }
 
-    struct wfs_inode *i=get_inode_number_path(y);
-    struct wfs_log_entry *e=(void*)i;
+    struct wfs_inode *parent_inode = get_inode_number_path(parent_path);
+    if (parent_inode == NULL) { // Handle the case where the parent directory does not exist
+        printf("Error: Parent directory does not exist\n");
+        return -ENOENT;
+    }
+    struct wfs_log_entry *parent_log_entry = (void*)parent_inode;
 
-    size_t size=sizeof(struct wfs_log_entry)+sizeof(struct wfs_dentry)+i->size;
-    struct wfs_log_entry *new_entry=malloc(size);
-    memcpy(new_entry,i,sizeof(*i));
-    memcpy(new_entry->data,e->data,i->size);
-    new_entry->inode.size+=sizeof(struct wfs_dentry);
+    size_t new_entry_size = sizeof(struct wfs_log_entry) + sizeof(struct wfs_dentry) + parent_inode->size;
+    struct wfs_log_entry *new_entry = malloc(new_entry_size);
+    if (new_entry == NULL) { // Handle memory allocation failure
+        printf("Error: Memory allocation failed\n");
+        return -ENOMEM;
+    }
 
-    struct wfs_dentry *d=(void*)(new_entry->data+i->size);
+    // Copy data from the parent entry to the new entry
+    memcpy(new_entry, parent_inode, sizeof(*parent_inode));
+    memcpy(new_entry->data, parent_log_entry->data, parent_inode->size);
+    new_entry->inode.size += sizeof(struct wfs_dentry);
+
+    struct wfs_dentry *new_dentry = (void *)(new_entry->data + parent_inode->size);
 
     char input[25];
     for(int i = 0; i < MAX_LENGTH; i++) {
         input[i] = path[i];
     }
+
     char**tokens=tokenize(input);
-    int k=0;
-    char z[25];
-    while(tokens[k]!=NULL){
-        strcpy(z,tokens[k]);
-        k++;
+    int token_index = 0;
+    char current_token[25];
+    while(tokens[token_index] != NULL){
+        strcpy(current_token,tokens[token_index]);
+        token_index++;
     }
-    strcpy(d->name,z);
+    strcpy(new_dentry->name, current_token);
 
+    // Update inode number and copy the new entry to the mapped disk
     inode_number++;
-    d->inode_number=inode_number;
+    new_dentry->inode_number=inode_number;
 
-    memcpy((char*)mapped_disk+head,new_entry,size);
+    memcpy((char*)mapped_disk+head,new_entry,new_entry_size);
 
-    head+=size;
+    head += new_entry_size;
     
     free(new_entry);
 
-    struct wfs_inode iii={
-        .inode_number=inode_number,
-        .deleted=0,
-        .mode=__S_IFREG|mode,
-        .uid=getuid(),
-        .gid=getgid(),
-        .size=0,
-        .atime=time(NULL),
-        .mtime=time(NULL),
-        .ctime=time(NULL),
-        .links=1,
+    // Create a new inode for the newly created file
+    struct wfs_inode new_inode = {
+        .inode_number = inode_number,
+        .deleted = 0,
+        .mode = __S_IFREG | mode,
+        .uid = getuid(),
+        .gid = getgid(),
+        .size = 0,
+        .atime = time(NULL),
+        .mtime = time(NULL),
+        .ctime = time(NULL),
+        .links = 1,
     };
 
-    memcpy((char*)mapped_disk+head, &iii,sizeof(iii));
+    // Copy the new inode to the mapped disk and update the superblock
+    memcpy((char*)mapped_disk+head, &new_inode,sizeof(new_inode));
     struct wfs_sb *sb=(void*)mapped_disk;
-    head+=sizeof(iii);
+    head+=sizeof(new_inode);
     sb->head = head;
 
     return 0;
-    /*
-    create a new log entry for the parent directory that holds the file that you are making
-    make a log entry for the file
-    check the stat of the file
-    */
 }
 
 static int wfs_mkdir(const char *path, mode_t mode) {
@@ -596,20 +619,6 @@ static int wfs_unlink(const char *path) { // same as deleting, set the inode del
 
 
     return 0;
-
-
-    // struct wfs_log_entry *old_parent;
-    // struct wfs_log_entry *new_parent;
-    // struct wfs_log_entry *current_entry;
-
-    // current_entry = get_inode_number_path(path);
-    // if (current_entry == NULL) { // Handle the case where the specified path is not found
-    //     printf("Error: The specified path does not exist\n");
-    //     return -ENOENT; // Return -ENOENT for "No such file or directory"
-    // }
-
-    // current_entry->inode.deleted = 1; // set to deleted
-
 }
 
 static struct fuse_operations ops = {
