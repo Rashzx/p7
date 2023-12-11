@@ -376,50 +376,72 @@ static int wfs_mknod(const char *path, mode_t mode, dev_t dev) {
     return 0;
 }
 
+/**
+ * @brief Create a new directory in the filesystem.
+ *
+ * This function is called when the mkdir system call is invoked.
+ *
+ * @param path The path of the new directory.
+ * @param mode The permissions to set for the new directory.
+ * @return 0 on success, or a negative error code on failure.
+ */
 static int wfs_mkdir(const char *path, mode_t mode) {
-printf("mkdir called\n");
-    char x[MAX_LENGTH];
-    strcpy(x,path);
+    char input_path[MAX_LENGTH];
+    strcpy(input_path, path);
 
-    char y[MAX_LENGTH];
-    strcpy(y,remove_last_token(x));
-    if(strlen(y)==0){
-        strcpy(y,"/");
+    char parent_path[MAX_LENGTH];
+    strcpy(parent_path, remove_last_token(input_path));
+    if(strlen(parent_path) == 0){
+        strcpy(parent_path,"/");
     }
 
-    struct wfs_inode *i=get_inode_number_path(y);
-    struct wfs_log_entry *e=(void*)i;
+    // Get the parent inode
+    struct wfs_inode *parent_inode = get_inode_number_path(parent_path);
+    if (parent_inode == NULL) {
+        // Handle the case where the parent directory does not exist
+        printf("Error: Parent directory does not exist\n");
+        return -ENOENT;
+    }
+    struct wfs_log_entry *parent_log_entry=(void*)parent_inode;
 
-    size_t size=sizeof(struct wfs_log_entry)+sizeof(struct wfs_dentry)+i->size;
-    struct wfs_log_entry *new_entry=malloc(size);
-    memcpy(new_entry,i,sizeof(*i));
-    memcpy(new_entry->data,e->data,i->size);
-    new_entry->inode.size+=sizeof(struct wfs_dentry);
+    size_t new_entry_size = sizeof(struct wfs_log_entry) + sizeof(struct wfs_dentry) + parent_inode->size;
+    struct wfs_log_entry *new_entry = malloc(new_entry_size);
+    if (new_entry == NULL) { // Handle memory allocation failure
+        printf("Error: Memory allocation failed\n");
+        return -ENOMEM;
+    }
 
-    struct wfs_dentry *d=(void*)(new_entry->data+i->size);
+    // Copy data from the parent entry to the new entry
+    memcpy(new_entry, parent_inode, sizeof(*parent_inode));
+    memcpy(new_entry->data, parent_log_entry->data, parent_inode->size);
+    new_entry->inode.size += sizeof(struct wfs_dentry);
 
+    struct wfs_dentry *new_dentry = (void*)(new_entry->data + parent_inode->size);
+
+    // Extract the name of the new directory from the path
     char input[25];
     for(int i = 0; i < MAX_LENGTH; i++) {
         input[i] = path[i];
     }
-    char**tokens=tokenize(input);
-    int k=0;
-    char z[25];
-    while(tokens[k]!=NULL){
-        strcpy(z,tokens[k]);
-        k++;
+
+    char **tokens = tokenize(input);
+    int token_index = 0;
+    char current_token[25];
+    while(tokens[token_index]!=NULL){
+        strcpy(current_token, tokens[token_index]);
+        token_index++;
     }
-    strcpy(d->name,z);
+    strcpy(new_dentry->name, current_token);
 
     inode_number++;
-    d->inode_number=inode_number;
+    new_dentry->inode_number=inode_number;
 
-    memcpy((char*)mapped_disk+head,new_entry,size);
+    memcpy((char*)mapped_disk+head,new_entry,new_entry_size);
 
-    head+=size;
+    head += new_entry_size;
     free(new_entry);
 
-    struct wfs_inode iii={
+    struct wfs_inode new_inode={
         .inode_number=inode_number,
         .deleted=0,
         .mode= __S_IFDIR | mode,
@@ -432,9 +454,10 @@ printf("mkdir called\n");
         .links=1,
     };
 
-    memcpy((char*)mapped_disk+head, &iii,sizeof(iii));
-
-    head+=sizeof(iii);
+    memcpy((char*)mapped_disk + head, &new_inode, sizeof(new_inode));
+    struct wfs_sb *sb = (void*)mapped_disk;
+    head += sizeof(new_inode);
+    sb->head = head;
 
     return 0;
 }
