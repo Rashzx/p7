@@ -517,7 +517,6 @@ static int wfs_unlink(const char *path) { // same as deleting, set the inode del
 
     while(curr < (struct wfs_log_entry *) ((char*)mapped_disk + ((struct wfs_sb *)mapped_disk)->head)) {
 
-        // CHECK IF DELETED OR NOT
         if(curr->inode.deleted == 0 && curr->inode.inode_number == inode_num) {
 
             curr->inode.deleted = 1;
