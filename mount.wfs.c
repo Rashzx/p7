@@ -20,9 +20,14 @@ int currFd; // file descriptor for the current open file
 uint32_t head;
 int inode_number;
 int length;
-
 struct wfs_log_entry *find_last_matching_inode(unsigned long inode_number);
 
+/**
+ * Helper method that counts the number of slashes ('/') in the given file path.
+ *
+ * @param filepath  A null-terminated string representing the file path.
+ * @return          The count of slashes in the file path.
+ */
 int count_slashes(const char *filepath) {
     int count = 0;
     while (*filepath) {
@@ -34,28 +39,50 @@ int count_slashes(const char *filepath) {
     return count;
 }
 
+/**
+ * Helper method that tokenizes a string based on the '/' delimiter.
+ *
+ * @param str       The input string to be tokenized.
+ * @return          An array of strings containing the tokens.
+ *                  The array is null-terminated.
+ *                  Memory is dynamically allocated, and the caller is responsible for freeing it.
+ */
 char** tokenize(char str[]) {
-    int i = 0;
-    char *p = strtok(str, "/");
-    char **array = malloc(MAX_LENGTH * sizeof(char*));  // Allocate memory for an array
-
-    while (p != NULL && i < MAX_LENGTH) {
-        array[i++] = strdup(p);  // Duplicate the token and store its pointer
-        p = strtok(NULL, "/");
+    // Initialize an array to store pointers to tokens
+    char **array = malloc(MAX_LENGTH * sizeof(char*));
+    if (array == NULL) { // Handle memory allocation failure
+        printf("Memory allocation failed");
+        exit(EXIT_FAILURE);
     }
 
-    array[i] = NULL;  // Null-terminate the array
+    // Tokenize the input string with forward slashes
+    char *token = strtok(str, "/");
+    int i = 0;
+    while (token != NULL && i < MAX_LENGTH) {
+        array[i++] = strdup(token); // Duplicate the token and store its pointer
+        if (array[i - 1] == NULL) { // Handle memory allocation failure
+            printf("Memory allocation failed");
+            exit(EXIT_FAILURE);
+        }
+        token = strtok(NULL, "/");
+    }
 
+    array[i] = NULL; // Null-terminate the array
     return array;
-} 
+}
 
-char* removeLastToken(char str[]) {
+/**
+ * Helper method that removes the last token from the input string and returns the modified string.
+ *
+ * @param str   The input string to be processed.
+ * @return      A newly allocated string without the last token.
+ *              The caller is responsible for freeing the returned string.
+ */
+char* remove_last_token(char str[]) {
     char** tokens = tokenize(str);
-
-    if (tokens[0] == NULL) {
-        char* result = malloc(1);
-        result[0] = '\0';
-        return result;
+    if (tokens[0] == NULL) { // return empty string on an empty path
+        printf("Error: The string is empty after tokenization\n");
+        return strdup("");
     }
 
     int lastTokenIndex = 0;
@@ -69,7 +96,10 @@ char* removeLastToken(char str[]) {
     }
 
     char* result = malloc(lengthWithoutLastToken + 1); // Add 1 for the null terminator
-
+    if (result == NULL) {
+        printf("Memory allocation failed");
+        exit(EXIT_FAILURE);
+    }
     result[0] = '\0';
     for (int i = 0; i < lastTokenIndex; i++) {
         strcat(result, tokens[i]);
@@ -88,7 +118,6 @@ char* removeLastToken(char str[]) {
     return result;
 }
 
-
 // two helper methods
 // 1. get inode number from path
 /*
@@ -102,8 +131,6 @@ char* removeLastToken(char str[]) {
 */
 
 struct wfs_inode *get_inode_number_path(const char *filepath){
-
-
     int flag=0;
   //  printf("get_inode path %s\n",path);
 
@@ -140,6 +167,9 @@ struct wfs_inode *get_inode_number_path(const char *filepath){
         return (struct wfs_inode*)curr; 
     }
 }
+
+
+
 
 // 2. get inode from inode number (get log entry from inode number)
     // how to get the superblock
@@ -263,7 +293,7 @@ static int wfs_mknod(const char *path, mode_t mode, dev_t dev) {
     strcpy(x,path);
 
     char y[MAX_LENGTH];
-    strcpy(y,removeLastToken(x));
+    strcpy(y,remove_last_token(x));
     if(strlen(y)==0){
         strcpy(y,"/");
     }
@@ -331,7 +361,7 @@ printf("mkdir called\n");
     strcpy(x,path);
 
     char y[MAX_LENGTH];
-    strcpy(y,removeLastToken(x));
+    strcpy(y,remove_last_token(x));
     if(strlen(y)==0){
         strcpy(y,"/");
     }
@@ -459,19 +489,27 @@ static struct fuse_operations ops = {
     .unlink     = wfs_unlink,
 };
 
-// take disk out , build a new argument vector without disk
-// check that argc is passed in correctly 
+/**
+ * Mounts a WFS (Writeable File System) using FUSE.
+ *
+ * @param argc      The number of command-line arguments.
+ * @param argv      An array of strings representing the command-line arguments.
+ *                 Expected format: mount.wfs [FUSE options] disk_path mount_point
+ * @return          The exit status of the FUSE filesystem operation.
+ *                 Returns 0 on success, non-zero on failure.
+ *                 Refer to FUSE documentation for specific error codes.
+ */
 int main(int argc, char *argv[]) {
     // if (argc < 3 || strcmp(argv[0], "./mount.wfs") != 0 || argv[argc - 2][0] == '-' || argv[argc - 1][0] == '-') {
     if (argc < 3 || argv[argc - 2][0] == '-' || argv[argc - 1][0] == '-') { // checks from fuse website
         printf("Usage: mount.wfs [FUSE options] disk_path mount_point\n");
-        exit(-1);
+        exit(EXIT_FAILURE);
     }
     disk_path = argv[argc-2]; // get disk path from the second last parameter of the string
     int file_descriptor = open(disk_path, O_RDWR); // check that the disk path is valid, opening using 
     if (file_descriptor == -1) {
         printf("Error opening file");
-        exit(-1);
+        exit(EXIT_FAILURE);
     }
 
     // Create a struct to hold the information from the file
@@ -479,7 +517,7 @@ int main(int argc, char *argv[]) {
     if (fstat(file_descriptor, &stat_info) == -1) { //check error condition for error during operation
         printf("Error getting file size");
         close(file_descriptor);
-        exit(-1);
+        exit(EXIT_FAILURE);
     }
     stat(disk_path,&stat_info); // gets info from the disk path and stores into stat info
 
@@ -489,7 +527,7 @@ int main(int argc, char *argv[]) {
     if (mapped_disk == (void *)-1) {
         printf("Error mapping file into memory\n");
         close(file_descriptor);
-        exit(-1);
+        exit(EXIT_FAILURE);
     }
     close(file_descriptor);
 
@@ -498,7 +536,7 @@ int main(int argc, char *argv[]) {
     head = sb->head;
 
     // code from https://www.cs.nmsu.edu/~pfeiffer/fuse-tutorial/html/init.html
-    // building new argument vector from argc and argv
+    // building new argument vector from argc and argv, without the disk
     argv[argc-2] = argv[argc-1];
     argv[argc-1] = NULL;
     argc--;
