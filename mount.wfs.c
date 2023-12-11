@@ -20,6 +20,7 @@ int currFd; // file descriptor for the current open file
 uint32_t head;
 int inode_number;
 int length;
+
 struct wfs_log_entry *find_last_matching_inode(unsigned long inode_number);
 
 /**
@@ -130,46 +131,77 @@ char* remove_last_token(char str[]) {
     - return the inode number
 */
 
-struct wfs_inode *get_inode_number_path(const char *filepath){
-    int flag=0;
-  //  printf("get_inode path %s\n",path);
-
-    char input[MAX_LENGTH];
-    for(int i = 0; i < MAX_LENGTH; i++) {
-        input[i] = filepath[i];
+/**
+ * Helper method that frees the memory allocated for an array of strings.
+ *
+ * This function takes an array of strings and iteratively frees each string 
+ * along with the memory allocated for the array itself. The array is expected 
+ * to be null-terminated.
+ *
+ * @param tokens An array of strings to be freed.
+ */
+void free_tokens(char** tokens) {
+    for (int i = 0; tokens[i] != NULL; i++) {
+        free(tokens[i]);
     }
+    free(tokens);
+}
+
+struct wfs_inode *get_inode_number_path(const char *filepath){
+    int found_flag = 0;
+
+    // Make a copy of the input filepath to avoid modifying the original string
+    char input[MAX_LENGTH];
+    strncpy(input, filepath, MAX_LENGTH - 1);
+    input[MAX_LENGTH - 1] = '\0';  // Null-termination for strings
+
+    
     char**tokens=tokenize(input);
+    if (tokens == NULL) {
+        printf("Error: Tokenization failed in get_inode_number_path()\n");
+        return NULL; // Return -ENOMEM on memory allocation failure
+    }
 
     struct wfs_log_entry *curr = find_last_matching_inode(0);
-   // printf("curr %p\n",(void*)curr);
- //   printf("size: %ld\n", curr->inode.size/sizeof(struct wfs_dentry));
+    if (curr == NULL) {
+        printf("Error: Failed to find last matching inode\n");
+        free_tokens(tokens);
+        return NULL; // Return -ENOENT when the last matching inode is not found
+    }
 
     int i = 0;
-    if(tokens[i] == NULL)   return (struct wfs_inode*)curr;
+    if (tokens[i] == NULL) {
+        free_tokens(tokens);
+        return (struct wfs_inode*)curr;
+    }
+
     while(tokens[i] != NULL) {
-        printf("Trying to find: %s\n", tokens[i]);
-        flag=0;
-        struct wfs_dentry*e=((void*)curr->data);
-        for(int j = 0; j < curr->inode.size/sizeof(struct wfs_dentry); j++) {
-            printf("DIR entry: %s\n", e->name);
-            if(strcmp(tokens[i],e->name)==0) {
-                curr = find_last_matching_inode(e->inode_number);
-                flag=1;
+        // printf("Trying to find: %s\n", tokens[i]);
+        found_flag=0;
+        struct wfs_dentry* entry = (struct wfs_dentry*)curr->data;
+
+        for(int j = 0; j < (curr->inode.size/sizeof(struct wfs_dentry)); j++) {
+            printf("DIR entry: %s\n", entry->name);
+            if(strcmp(tokens[i],entry->name) == 0) {
+                curr = find_last_matching_inode(entry->inode_number);
+                if (curr == NULL) {
+                    printf("Error: Failed to find last matching inode\n");
+                    free_tokens(tokens);
+                    return NULL; //ERR_PTR(-ENOENT)
+                }
+                found_flag = 1;
             }
-            e++;
+            entry++;
         }
         i++;
     }
-
-    if(flag==0){
-        return NULL;
+    free_tokens(tokens);
+    if(found_flag == 0){
+        return NULL; // Return -ENOENT when the file/directory does not exist
     }else{
         return (struct wfs_inode*)curr; 
     }
 }
-
-
-
 
 // 2. get inode from inode number (get log entry from inode number)
     // how to get the superblock
@@ -219,14 +251,14 @@ struct wfs_log_entry *find_last_matching_inode(unsigned long inode_number){
     return last_matching_entry;
 }
 
-/*
-helper method to find the highest inode number (used to find the next inode number to insert in at)
-start at a 0 for root node, set it equal to a var
-while loop that stops when find_last_matching_inode's log entry inode's inode number is not equal to the var
-if the log entry inode is equal to the var, break out of the while loop
-increment the var
-return the var
-*/
+/**
+ * Finds the highest inode number currently in use.
+ *
+ * This function starts at inode number 0 for the root node and iterates
+ * through log entries until it finds the last matching inode number.
+ *
+ * @return The highest inode number currently in use.
+ */
 unsigned int find_current_highest_inode_number(){
     unsigned int current_inode_number = 0;
     struct wfs_log_entry *temp_log_entry;
@@ -238,8 +270,6 @@ unsigned int find_current_highest_inode_number(){
         }
         current_inode_number++;
     }
-
-    // Now you can use temp_log_entry outside of the loop
     return temp_log_entry->inode.inode_number;
 }
 
@@ -255,16 +285,6 @@ look at the logentry as you're looking at code and debugging
 
 static int wfs_getattr(const char *path, struct stat *stbuf) {
     struct wfs_log_entry *logx = (struct wfs_log_entry*)get_inode_number_path(path);
-//    if (e->inode_number == -1){
-  //      printf("function returned -1, meaning file doesn't exist\n");
-    //    return(-1);
- //   }
- //   if (logx->data == NULL){
-   //     printf("function returned NULL, meaning file doesn't exist\n");
-  //      // return(-1);
- //       return -ENOENT;
- //   }
-
     struct wfs_inode *i = &logx->inode;
       if (!i)
         return -ENOENT;
@@ -278,13 +298,11 @@ static int wfs_getattr(const char *path, struct stat *stbuf) {
     stbuf->st_nlink = i->links;
     stbuf->st_size = i->size;
 
-    /*
-    If a field is meaningless or semi-meaningless (e.g., st_ino) then it should be set to 0 or given a "reasonable" value.
-    //    stbuf->st_dev = 0;
-    //    stbuf->st_blksize = 0;
-    //    stbuf->st_blocks = 0;
-    //    stbuf->st_rdev = 0;
-    */
+    /*If a field is meaningless or semi-meaningless (e.g., st_ino) then it should be set to 0 or given a "reasonable" value.*/
+    stbuf->st_dev = 0;
+    stbuf->st_blksize = 0;
+    stbuf->st_blocks = 0;
+    stbuf->st_rdev = 0;
     return 0;
 }
 
@@ -475,6 +493,18 @@ static int wfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_
 }
 
 static int wfs_unlink(const char *path) { // same as deleting, set the inode delete,
+    // struct wfs_log_entry *old_parent;
+    // struct wfs_log_entry *new_parent;
+    // struct wfs_log_entry *current_entry;
+
+    // current_entry = get_inode_number_path(path);
+    // if (current_entry == NULL) { // Handle the case where the specified path is not found
+    //     printf("Error: The specified path does not exist\n");
+    //     return -ENOENT; // Return -ENOENT for "No such file or directory"
+    // }
+
+    // current_entry->inode.deleted = 1; // set to deleted
+
 
     return 1;
 }
